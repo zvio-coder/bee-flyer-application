@@ -73,14 +73,14 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
   const imgRef = useRef(null);
 
   const [imageUrl, setImageUrl] = useState(value?.imageUrl || "");
-  const [paths, setPaths] = useState(value?.paths || []);
+  const [paths, setPaths] = useState(Array.isArray(value?.paths) ? value.paths : []); // each path: [{x,y}...]
   const [current, setCurrent] = useState([]);
   const [strokeWidth, setStrokeWidth] = useState(value?.strokeWidth || 4);
 
-  // ✅ FIX: correctly pass new state up (no accidental prev())
+  // push plain object upward (no function confusion)
   useEffect(() => {
-    onChange?.((prev) => ({ ...prev, imageUrl, paths, strokeWidth }));
-  }, [imageUrl, paths, strokeWidth, onChange]);
+    onChange?.({ imageUrl, paths, strokeWidth, png: value?.png || "" });
+  }, [imageUrl, paths, strokeWidth]); // eslint-disable-line
 
   const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 
@@ -118,7 +118,7 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     const parent = canvas.parentElement;
 
     const w = parent.clientWidth;
-    const byAspect = Math.round(w * 0.9);               // wider/taller than before
+    const byAspect = Math.round(w * 0.9);               // taller than before
     const byViewport = Math.round(window.innerHeight * 0.7); // up to 70% viewport height
     const h = Math.max(260, Math.min(byAspect, byViewport));
 
@@ -301,34 +301,33 @@ export default function App() {
   const [contact, setContact] = useState(loadLS("contact", { name: "", phone: "", email: "" }));
   const [answers, setAnswers] = useState(loadLS("answers", {}));
 
-  // keep a PNG snapshot so we can email it even when canvases are unmounted
-  const [mapA, _setMapA] = useState(loadLS("mapA", {
-    imageUrl: "/garden-city-map-with-x.png", paths: [], strokeWidth: 4, png: ""
-  }));
-  const [mapB, _setMapB] = useState(loadLS("mapB", {
-    imageUrl: "/creggan-no-x.png", paths: [], strokeWidth: 4, png: ""
-  }));
+  // Normalize any LS data to avoid crashes
+  const normalizeMap = (val, fallbackUrl) => {
+    if (!val || typeof val !== 'object') {
+      return { imageUrl: fallbackUrl, paths: [], strokeWidth: 4, png: "" };
+    }
+    return {
+      imageUrl: val.imageUrl || fallbackUrl,
+      paths: Array.isArray(val.paths) ? val.paths : [],
+      strokeWidth: typeof val.strokeWidth === "number" ? val.strokeWidth : 4,
+      png: typeof val.png === "string" ? val.png : "",
+    };
+  };
 
-  const setMapA = (updater) => {
-    _setMapA(prev => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      saveLS("mapA", next);
-      return next;
-    });
-  };
-  const setMapB = (updater) => {
-    _setMapB(prev => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      saveLS("mapB", next);
-      return next;
-    });
-  };
+  const [mapA, setMapA] = useState(() =>
+    normalizeMap(loadLS("mapA", null), "/garden-city-map-with-x.png")
+  );
+  const [mapB, setMapB] = useState(() =>
+    normalizeMap(loadLS("mapB", null), "/creggan-no-x.png")
+  );
 
   const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => saveLS("step", step), [step]);
   useEffect(() => saveLS("contact", contact), [contact]);
   useEffect(() => saveLS("answers", answers), [answers]);
+  useEffect(() => saveLS("mapA", mapA), [mapA]);
+  useEffect(() => saveLS("mapB", mapB), [mapB]);
 
   const totalSteps = 1 + QUESTIONS.length + 2 + 1;
 
@@ -359,7 +358,7 @@ export default function App() {
 
   const onAnswer = (qid, val) => setAnswers((s) => ({ ...s, [qid]: val }));
 
-  // capture PNG when leaving a map step
+  // Capture PNG when leaving a map step so email always has drawings
   const captureMapPNGIfNeeded = () => {
     if (atMap1) {
       const el = document.getElementById("mapA");
@@ -465,7 +464,7 @@ export default function App() {
         {atMap1 && (
           <MapSketch
             value={mapA}
-            onChange={(updater)=>{ setMapA(prev => (typeof updater === 'function' ? updater(prev) : updater)); }}
+            onChange={(v)=> setMapA(prev => ({ ...prev, ...v }))}
             title="Map Task 1"
             helper="Draw a line for the route you would take to deliver to every house in the most efficient way. Start at the X."
             canvasId="mapA"
@@ -475,7 +474,7 @@ export default function App() {
         {atMap2 && (
           <MapSketch
             value={mapB}
-            onChange={(updater)=>{ setMapB(prev => (typeof updater === 'function' ? updater(prev) : updater)); }}
+            onChange={(v)=> setMapB(prev => ({ ...prev, ...v }))}
             title="Map Task 2"
             helper="Draw your route again on this map. First, draw an X where you would start, then draw the route."
             canvasId="mapB"
