@@ -67,7 +67,7 @@ label.block{display:block;margin:0 0 6px;font-size:14px;color:var(--muted)}
   cursor:pointer;
   background:#0e1730;
   margin:4px 6px 0 0;
-  color: var(--text);      /* ensure white text on dark */
+  color: var(--text);
   font-weight: 600;
 }
 .badge.active{border-color:var(--accent-2); background:rgba(70,194,169,0.12)}
