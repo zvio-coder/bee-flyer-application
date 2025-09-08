@@ -71,10 +71,10 @@ const validatePhone = (phone) => /^(\+\d{7,15}|0\d{9,11}|\d{7,15})$/.test(phone)
 const MAP_A_URL = "/garden-city-map-with-x.png";
 const MAP_B_URL = "/creggan-no-x.png";
 
-/* Fix old saved paths with spaces (migration) */
+/* Fix old saved paths (migration) */
 const migrateUrl = (url) => {
   if (!url) return url;
-  const t = String(url).toLowerCase();
+  const t = String(url).toLowerCase().trim();
   if (t.includes("garden city map with x.png")) return MAP_A_URL;
   if (t.includes("creggan no x.png")) return MAP_B_URL;
   return url;
@@ -92,35 +92,71 @@ const normalizeMap = (val, fallbackUrl) => {
   };
 };
 
-/* ============ Map Sketch (with explicit preloading) ============ */
+/* ======== Robust image preloader with fallbacks ======== */
+function preloadImageWithFallbacks(src, onDone) {
+  if (!src) return onDone(null);
+
+  // Build a list of safe variants to try
+  const base = src.trim();
+  const variants = [];
+
+  // absolute as given
+  variants.push(base);
+
+  // encoded absolute
+  try { variants.push("/" + encodeURI(base.replace(/^\//, ""))); } catch {}
+
+  // relative
+  variants.push(base.replace(/^\//, ""));
+
+  // encoded relative
+  try { variants.push(encodeURI(base.replace(/^\//, ""))); } catch {}
+
+  // ensure uniqueness
+  const tried = new Set();
+  const queue = variants.filter(v => v && !tried.has(v) && (tried.add(v), true));
+
+  const tryNext = () => {
+    if (!queue.length) return onDone(null);
+    const url = queue.shift();
+    const img = new Image();
+    img.onload = () => onDone(img);
+    img.onerror = () => tryNext();
+    img.src = url;
+  };
+  tryNext();
+}
+
+/* ============ Map Sketch ============ */
 function MapSketch({ value, onChange, title, helper, canvasId }) {
   const canvasRef = useRef(null);
   const roRef = useRef(null);
   const [imgEl, setImgEl] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   const imageUrl = value?.imageUrl || "";
   const paths = Array.isArray(value?.paths) ? value.paths : [];
   const strokeWidth = typeof value?.strokeWidth === "number" ? value.strokeWidth : 4;
 
-  // Preload the image every time imageUrl changes
+  // Preload image with robust fallbacks
   useEffect(() => {
-    if (!imageUrl) { setImgEl(null); return; }
-    const img = new Image();
-    img.onload = () => setImgEl(img);
-    img.onerror = () => setImgEl(null);
-    img.src = imageUrl;
-    // Note: don’t set crossOrigin; we’re same origin
+    setLoading(true);
+    setImgEl(null);
+    const src = migrateUrl(imageUrl);
+    preloadImageWithFallbacks(src, (img) => {
+      setImgEl(img);
+      setLoading(false);
+    });
   }, [imageUrl]);
 
-  // up-propagate plain object whenever drawing settings change
+  // push up-to-parent (plain object)
   useEffect(() => {
     onChange?.({
-      imageUrl,
+      imageUrl: migrateUrl(imageUrl),
       paths,
       strokeWidth,
       png: typeof value?.png === "string" ? value.png : ""
     });
-    // value?.png deliberately read only
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageUrl, paths, strokeWidth]);
 
@@ -144,15 +180,14 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     ctx.strokeStyle = "#ff6666";
     ctx.lineWidth = strokeWidth * dpr;
 
-    const renderPath = (p) => {
-      if (!p || !p.length) return;
+    // draw stored paths
+    for (const p of paths) {
+      if (!p || !p.length) continue;
       ctx.beginPath();
       ctx.moveTo(p[0].x, p[0].y);
       for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
       ctx.stroke();
-    };
-
-    paths.forEach(renderPath);
+    }
   };
 
   const resizeCanvas = () => {
@@ -174,7 +209,7 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     drawAll();
   };
 
-  // set up ResizeObserver safely
+  // ResizeObserver safely
   useEffect(() => {
     resizeCanvas();
     const parent = canvasRef.current?.parentElement;
@@ -190,10 +225,10 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dpr]);
 
-  // redraw when image or paths change
+  // redraw on image/paths/width
   useEffect(() => { drawAll(); }, [imgEl, paths, strokeWidth]); // eslint-disable-line
 
-  // simple drawing (pen)
+  // drawing
   const [current, setCurrent] = useState([]);
   const getPoint = (e) => {
     const canvas = canvasRef.current;
@@ -216,8 +251,7 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     if ("touches" in e) e.preventDefault();
     const nextPaths = [...paths, current];
     setCurrent([]);
-    onChange?.({ imageUrl, paths: nextPaths, strokeWidth, png: value?.png || "" });
-    // We push via onChange so parent owns paths; re-draw:
+    onChange?.({ imageUrl: migrateUrl(imageUrl), paths: nextPaths, strokeWidth, png: value?.png || "" });
     setTimeout(drawAll, 0);
   };
 
@@ -225,8 +259,7 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    drawAll(); // redraw bg & previous paths
-    // then draw the in-progress stroke
+    drawAll();
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.strokeStyle = "#ff6666";
@@ -240,11 +273,11 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
 
   const undo = () => {
     const next = paths.slice(0, -1);
-    onChange?.({ imageUrl, paths: next, strokeWidth, png: value?.png || "" });
+    onChange?.({ imageUrl: migrateUrl(imageUrl), paths: next, strokeWidth, png: value?.png || "" });
     setTimeout(drawAll, 0);
   };
   const clearAll = () => {
-    onChange?.({ imageUrl, paths: [], strokeWidth, png: value?.png || "" });
+    onChange?.({ imageUrl: migrateUrl(imageUrl), paths: [], strokeWidth, png: value?.png || "" });
     setTimeout(drawAll, 0);
   };
   const toPNG = () => {
@@ -274,7 +307,7 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
           <div className="range">
             <span className="subtle">Width</span>
             <input type="range" min="2" max="14" value={strokeWidth}
-                   onChange={(e)=>onChange?.({ imageUrl, paths, strokeWidth: parseInt(e.target.value,10), png: value?.png || "" })}/>
+                   onChange={(e)=>onChange?.({ imageUrl: migrateUrl(imageUrl), paths, strokeWidth: parseInt(e.target.value,10), png: value?.png || "" })}/>
           </div>
           <button className="btn btn-outline" onClick={undo} title="Undo last stroke">Undo</button>
           <button className="btn btn-danger" onClick={clearAll} title="Clear drawing">Clear</button>
@@ -294,9 +327,14 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
           onTouchEnd={end}
         />
       </div>
-      {!imgEl && (
+      {loading && (
         <div className="subtle" style={{marginTop:8}}>
           (Loading map…)
+        </div>
+      )}
+      {!loading && !imgEl && (
+        <div className="subtle" style={{marginTop:8, color:'#ffbdbd'}}>
+          (Map image failed to load. Please continue your drawing anyway.)
         </div>
       )}
     </div>
