@@ -71,54 +71,68 @@ const validatePhone = (phone) => /^(\+\d{7,15}|0\d{9,11}|\d{7,15})$/.test(phone)
 function MapSketch({ value, onChange, title, helper, canvasId }) {
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
+  const roRef = useRef(null);
 
   const [imageUrl, setImageUrl] = useState(value?.imageUrl || "");
-  const [paths, setPaths] = useState(Array.isArray(value?.paths) ? value.paths : []); // each path: [{x,y}...]
+  const [paths, setPaths] = useState(Array.isArray(value?.paths) ? value.paths : []);
   const [current, setCurrent] = useState([]);
-  const [strokeWidth, setStrokeWidth] = useState(value?.strokeWidth || 4);
+  const [strokeWidth, setStrokeWidth] = useState(
+    typeof value?.strokeWidth === "number" ? value.strokeWidth : 4
+  );
 
-  // push plain object upward (no function confusion)
+  // push a plain object upward (no function confusion)
   useEffect(() => {
-    onChange?.({ imageUrl, paths, strokeWidth, png: value?.png || "" });
+    onChange?.({
+      imageUrl,
+      paths,
+      strokeWidth,
+      png: typeof value?.png === "string" ? value.png : ""
+    });
   }, [imageUrl, paths, strokeWidth]); // eslint-disable-line
 
   const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 
   const drawAll = () => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (imgRef.current && imgRef.current.complete && imageUrl) {
-      ctx.globalCompositeOperation = "source-over";
-      ctx.drawImage(imgRef.current, 0, 0, canvas.width, canvas.height);
+    try {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (imgRef.current && imgRef.current.complete && imageUrl) {
+        ctx.globalCompositeOperation = "source-over";
+        ctx.drawImage(imgRef.current, 0, 0, canvas.width, canvas.height);
+      }
+
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "#ff6666";
+      ctx.lineWidth = strokeWidth * dpr;
+
+      const renderPath = (p) => {
+        if (!p || !p.length) return;
+        ctx.beginPath();
+        ctx.moveTo(p[0].x, p[0].y);
+        for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
+        ctx.stroke();
+      };
+
+      paths.forEach(renderPath);
+      renderPath(current);
+    } catch {
+      /* ignore draw errors */
     }
-
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.strokeStyle = "#ff6666";
-    ctx.lineWidth = strokeWidth * dpr;
-
-    const renderPath = (p) => {
-      if (!p || !p.length) return;
-      ctx.beginPath();
-      ctx.moveTo(p[0].x, p[0].y);
-      for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
-      ctx.stroke();
-    };
-
-    paths.forEach(renderPath);
-    renderPath(current);
   };
 
   const resizeCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const parent = canvas.parentElement;
+    if (!parent) return;
 
-    const w = parent.clientWidth;
-    const byAspect = Math.round(w * 0.9);               // taller than before
+    const w = parent.clientWidth || 600;
+    const byAspect = Math.round(w * 0.9);                 // taller than before
     const byViewport = Math.round(window.innerHeight * 0.7); // up to 70% viewport height
     const h = Math.max(260, Math.min(byAspect, byViewport));
 
@@ -131,18 +145,28 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
 
   useEffect(() => {
     resizeCanvas();
-    const ro = new ResizeObserver(resizeCanvas);
-    ro.observe(canvasRef.current.parentElement);
-    return () => ro.disconnect();
+
+    const parent = canvasRef.current?.parentElement;
+    if (parent && typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => resizeCanvas());
+      ro.observe(parent);
+      roRef.current = ro;
+    }
+
+    return () => {
+      try { roRef.current?.disconnect?.(); } catch {}
+      roRef.current = null;
+    };
   }, [dpr]);
 
   useEffect(() => { drawAll(); }, [imageUrl, paths, current, strokeWidth]);
 
   const getPoint = (e) => {
     const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const cx = ("touches" in e ? e.touches[0].clientX : e.clientX);
-    const cy = ("touches" in e ? e.touches[0].clientY : e.clientY);
+    const cx = ("touches" in e ? e.touches[0].clientX : e.clientX) ?? 0;
+    const cy = ("touches" in e ? e.touches[0].clientY : e.clientY) ?? 0;
     const x = cx - rect.left;
     const y = cy - rect.top;
     return { x: x * dpr, y: y * dpr };
@@ -151,15 +175,14 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
   const start = (e) => { e.preventDefault(); setCurrent([getPoint(e)]); };
   const move  = (e) => {
     if (!current.length) return;
-    if ("touches" in e) e.preventDefault();   // stop the page from scrolling while drawing
+    if ("touches" in e) e.preventDefault();   // stop page from scrolling while drawing
     setCurrent((c)=>[...c, getPoint(e)]);
   };
   const end   = (e) => {
-    if (current.length){
-      if ("touches" in e) e.preventDefault();
-      setPaths((p)=>[...p, current]);
-      setCurrent([]);
-    }
+    if (!current.length) return;
+    if ("touches" in e) e.preventDefault();
+    setPaths((p)=>[...p, current]);
+    setCurrent([]);
   };
 
   const undo = () => setPaths((p) => p.slice(0, -1));
@@ -168,13 +191,19 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
   const toPNG = () => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    return canvas.toDataURL("image/png");
+    try {
+      return canvas.toDataURL("image/png");
+    } catch {
+      return null;
+    }
   };
 
   const downloadPNG = () => {
+    const data = toPNG();
+    if (!data) return;
     const link = document.createElement("a");
     link.download = `${title?.toLowerCase().replace(/\s+/g, "-") || "map"}.png`;
-    link.href = toPNG();
+    link.href = data;
     link.click();
   };
 
