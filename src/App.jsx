@@ -46,16 +46,26 @@ const QUESTIONS = [
     placeholder: "Describe your approach",
     required: true,
   },
-  // Removed the "angry_resident" question
 ];
 
 /* ============ Utils ============ */
-const lsKey = (k) => `leaflet_q_${k}`;
+const LS_PREFIX = "leaflet_q_";
+const lsKey = (k) => `${LS_PREFIX}${k}`;
 const saveLS = (k, v) => localStorage.setItem(lsKey(k), JSON.stringify(v));
 const loadLS = (k, fallback) => {
   try { const raw = localStorage.getItem(lsKey(k)); return raw ? JSON.parse(raw) : fallback; }
   catch { return fallback; }
 };
+const clearAllLS = () => {
+  // remove only our keys
+  const toRemove = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(LS_PREFIX)) toRemove.push(k);
+  }
+  toRemove.forEach((k) => localStorage.removeItem(k));
+};
+
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 const validatePhone = (phone) => /^(\+\d{7,15}|0\d{9,11}|\d{7,15})$/.test(phone);
 
@@ -69,8 +79,11 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
   const [current, setCurrent] = useState([]);
   const [strokeWidth, setStrokeWidth] = useState(value?.strokeWidth || 4);
 
-  // bubble up any change so parent can persist to LS
-  useEffect(() => onChange?.(prev => ({ ...(typeof prev === 'function' ? prev() : prev), imageUrl, paths, strokeWidth })), [imageUrl, paths, strokeWidth]); // eslint-disable-line
+  // send changes upward
+  useEffect(() => {
+    onChange?.((prev) => ({ ...(typeof prev === "function" ? prev() : prev), imageUrl, paths, strokeWidth }));
+    // eslint-disable-next-line
+  }, [imageUrl, paths, strokeWidth]);
 
   const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 
@@ -139,16 +152,13 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
   const undo = () => setPaths((p) => p.slice(0, -1));
   const clearAll = () => setPaths([]);
 
-  // expose a method to parent to capture PNG
   const toPNG = () => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     return canvas.toDataURL("image/png");
   };
 
-  // Save png on parent request
   useEffect(() => {
-    // parent can read via DOM id, but we also expose function via value.ref
     if (typeof value?.__attachPNGGetter === "function") {
       value.__attachPNGGetter(() => toPNG());
     }
@@ -292,7 +302,7 @@ export default function App() {
     imageUrl: "/creggan-no-x.png", paths: [], strokeWidth: 4, png: ""
   }));
 
-  // setters that accept updater or value
+  // setters that accept updater or value and persist
   const setMapA = (updater) => {
     _setMapA(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
@@ -360,9 +370,19 @@ export default function App() {
     setStep((s) => Math.min(totalSteps - 1, s + 1));
   };
   const goBack = () => {
-    // also capture in case they drew and hit back
     captureMapPNGIfNeeded();
     setStep((s) => Math.max(0, s - 1));
+  };
+
+  const resetAll = () => {
+    if (!confirm("Start again? This will clear all your answers and drawings.")) return;
+    clearAllLS();
+    setContact({ name: "", phone: "", email: "" });
+    setAnswers({});
+    setMapA({ imageUrl: "/garden-city-map-with-x.png", paths: [], strokeWidth: 4, png: "" });
+    setMapB({ imageUrl: "/creggan-no-x.png", paths: [], strokeWidth: 4, png: "" });
+    setSubmitted(false);
+    setStep(0);
   };
 
   const submitEmail = async () => {
@@ -393,7 +413,10 @@ export default function App() {
     return (
       <div className="app-wrap">
         <div className="card">
-          <h1>Thank you</h1>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+            <h1 style={{margin:0}}>Thank you</h1>
+            <button className="btn btn-danger" onClick={resetAll}>Start again</button>
+          </div>
           <p className="subtle">Thank you for your interest, we will contact you to proceed with your application in due course.</p>
         </div>
       </div>
@@ -403,8 +426,13 @@ export default function App() {
   return (
     <div className="app-wrap">
       <div className="card">
-        <h1>Bee Flyer – Application</h1>
-        <p className="subtle">Mobile-friendly questionnaire. Your progress saves automatically.</p>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div>
+            <h1 style={{margin:0}}>Bee Flyer – Application</h1>
+            <p className="subtle" style={{margin:'4px 0 0'}}>Mobile-friendly questionnaire. Your progress saves automatically.</p>
+          </div>
+          <button className="btn btn-danger" onClick={resetAll} title="Clear all and restart">Start again</button>
+        </div>
 
         <div className="progress" aria-label={`Progress ${progressPct}%`}>
           <div style={{ width: `${progressPct}%` }} />
