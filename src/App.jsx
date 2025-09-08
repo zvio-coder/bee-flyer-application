@@ -66,14 +66,13 @@ const loadLS = (k, fallback) => {
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 const validatePhone = (phone) => /^(\+\d{7,15}|0\d{9,11}|\d{7,15})$/.test(phone);
 
-/* ============ Map Sketch (Pen only, no eraser) ============ */
+/* ============ Map Sketch (Pen only) ============ */
 function MapSketch({ value, onChange, title, helper, canvasId }) {
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
 
-  // paths: array of arrays [{x,y}...]
   const [imageUrl, setImageUrl] = useState(value?.imageUrl || "");
-  const [paths, setPaths] = useState(value?.paths || []);
+  const [paths, setPaths] = useState(value?.paths || []); // each path: [{x,y}...]
   const [current, setCurrent] = useState([]);
   const [strokeWidth, setStrokeWidth] = useState(value?.strokeWidth || 4);
 
@@ -168,7 +167,6 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
             <input type="range" min="2" max="14" value={strokeWidth}
                    onChange={(e)=>setStrokeWidth(parseInt(e.target.value,10))}/>
           </div>
-
           <button className="btn btn-outline" onClick={undo} title="Undo last stroke">Undo</button>
           <button className="btn btn-danger" onClick={clearAll} title="Clear drawing">Clear</button>
           <button className="btn btn-outline" onClick={downloadPNG} title="Download PNG">Download</button>
@@ -196,11 +194,10 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
 
 /* ===== Custom DOB Picker: Year → Month → Day ===== */
 function DobPicker({ value, onChange }) {
-  // value is ISO yyyy-mm-dd or ""
   const today = new Date();
   const currentYear = today.getFullYear();
-  const minYear = 1940;         // adjust if you want
-  const maxYear = currentYear;  // allow current year, though candidates will pick earlier
+  const minYear = 1940;
+  const maxYear = currentYear;
 
   const parse = (iso) => {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
@@ -320,7 +317,6 @@ export default function App() {
     const mapACanvas = document.getElementById("mapA");
     const mapBCanvas = document.getElementById("mapB");
     const payload = {
-      to: "zvio@hotmail.co.uk",
       subject: `Bee Flyer Application - ${contact.name || "Unknown"}`,
       contact,
       answers,
@@ -328,7 +324,7 @@ export default function App() {
       mapB: { ...mapB, png: mapBCanvas?.toDataURL("image/png") },
     };
     try {
-      const res = await fetch("/.netlify/functions/send-email", {
+      const res = await fetch("/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -432,15 +428,12 @@ export default function App() {
 
 /* ============ Question / Summary ============ */
 function QuestionStep({ question, answer, onAnswer }) {
-  // Replace the native <input type="date"> with a custom DOB picker
+  // Custom DOB picker for the date step
   if (question.id === "dob" && question.type === "date") {
     return (
       <section className="panel">
         <div style={{fontWeight:700, marginBottom:8}}>{question.label}{question.required && " *"}</div>
-        <DobPicker
-          value={answer || ""}
-          onChange={(val) => onAnswer(question.id, val)}
-        />
+        <DobPicker value={answer || ""} onChange={(val) => onAnswer(question.id, val)} />
       </section>
     );
   }
