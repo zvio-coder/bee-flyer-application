@@ -1,24 +1,22 @@
 // netlify/functions/send-email.js
 import { Resend } from 'resend'
 
-// Ensure RESEND_API_KEY is set in Netlify → Site configuration → Environment variables
-const resend = new Resend(process.env.RESEND_API_KEY)
-
-/**
- * Netlify Function handler
- * - Uses Netlify's (event) signature, not (req, res)
- * - Expects JSON body from the frontend
- */
 export async function handler(event) {
-  // Allow only POST
   if (event.httpMethod !== 'POST') {
     return json({ error: 'Method not allowed' }, 405)
   }
 
+  const apiKey = process.env.RESEND_API_KEY
+  if (!apiKey) {
+    // Clear error message if the env var wasn’t set at build time
+    return json({ ok: false, error: 'RESEND_API_KEY is not set on Netlify' }, 500)
+  }
+
+  const resend = new Resend(apiKey)
+
   try {
     const { contact, answers, mapA, mapB, subject } = JSON.parse(event.body || '{}')
 
-    // Build simple HTML email
     const html = `
       <h2>Bee Flyer Application</h2>
       <p><strong>Name:</strong> ${contact?.name || ''}</p>
@@ -28,12 +26,7 @@ export async function handler(event) {
       <h3>Answers</h3>
       <ul>
         ${Object.entries(answers || {})
-          .map(
-            ([q, a]) =>
-              `<li><strong>${escapeHtml(q)}</strong>: ${
-                Array.isArray(a) ? a.map(escapeHtml).join(', ') : escapeHtml(a ?? '—')
-              }</li>`
-          )
+          .map(([q, a]) => `<li><strong>${escapeHtml(q)}</strong>: ${Array.isArray(a) ? a.map(escapeHtml).join(', ') : escapeHtml(a ?? '—')}</li>`)
           .join('')}
       </ul>
       <hr/>
@@ -43,10 +36,9 @@ export async function handler(event) {
       ${mapB?.png ? `<img src="${mapB.png}" alt="Map B drawing" style="max-width:100%;"/>` : '<p>No drawing</p>'}
     `
 
-    // Use Resend's safe test sender for now; swap to your verified domain later
     const { error } = await resend.emails.send({
       from: 'Bee Flyer <onboarding@resend.dev>',
-      to: 'zvio@hotmail.co.uk', // add more recipients later if you like
+      to: 'zvio@hotmail.co.uk',
       subject: subject || `Bee Flyer Application - ${contact?.name || 'Unknown'}`,
       html,
     })
@@ -63,24 +55,17 @@ export async function handler(event) {
   }
 }
 
-/* ---------------- helpers ---------------- */
-
 function json(payload, statusCode = 200) {
   return {
     statusCode,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      // CORS headers (usually not needed for same-origin, but harmless):
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
     },
     body: JSON.stringify(payload),
   }
 }
-
 function escapeHtml(v) {
-  return String(v)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+  return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
 }
