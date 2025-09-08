@@ -15,7 +15,7 @@ const QUESTIONS = [
   {
     id: "walk10mi",
     type: "single",
-    label: "Are you comfortable walking 10 miles per shift?",
+    label: "Are you comfortable walking long distances?",
     options: ["Yes","No"],
     required: true,
   },
@@ -46,14 +46,7 @@ const QUESTIONS = [
     placeholder: "Describe your approach",
     required: true,
   },
-  {
-    id: "angry_resident",
-    type: "longtext",
-    label:
-      "A resident is angry about receiving a leaflet and tries to hand it back to you; what do you do?",
-    placeholder: "Describe how you would handle this",
-    required: true,
-  },
+  // Removed the "angry_resident" question
 ];
 
 /* ============ Utils ============ */
@@ -76,7 +69,8 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
   const [current, setCurrent] = useState([]);
   const [strokeWidth, setStrokeWidth] = useState(value?.strokeWidth || 4);
 
-  useEffect(() => onChange?.({ imageUrl, paths, strokeWidth }), [imageUrl, paths, strokeWidth]);
+  // bubble up any change so parent can persist to LS
+  useEffect(() => onChange?.(prev => ({ ...(typeof prev === 'function' ? prev() : prev), imageUrl, paths, strokeWidth })), [imageUrl, paths, strokeWidth]); // eslint-disable-line
 
   const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 
@@ -145,10 +139,25 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
   const undo = () => setPaths((p) => p.slice(0, -1));
   const clearAll = () => setPaths([]);
 
+  // expose a method to parent to capture PNG
+  const toPNG = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    return canvas.toDataURL("image/png");
+  };
+
+  // Save png on parent request
+  useEffect(() => {
+    // parent can read via DOM id, but we also expose function via value.ref
+    if (typeof value?.__attachPNGGetter === "function") {
+      value.__attachPNGGetter(() => toPNG());
+    }
+  }, [value]);
+
   const downloadPNG = () => {
     const link = document.createElement("a");
     link.download = `${title?.toLowerCase().replace(/\s+/g, "-") || "map"}.png`;
-    link.href = canvasRef.current.toDataURL("image/png");
+    link.href = toPNG();
     link.click();
   };
 
@@ -274,15 +283,36 @@ export default function App() {
   const [step, setStep] = useState(loadLS("step", 0));
   const [contact, setContact] = useState(loadLS("contact", { name: "", phone: "", email: "" }));
   const [answers, setAnswers] = useState(loadLS("answers", {}));
-  const [mapA, setMapA] = useState(loadLS("mapA", { imageUrl: "/garden-city-map-with-x.png", paths: [], strokeWidth: 4 }));
-  const [mapB, setMapB] = useState(loadLS("mapB", { imageUrl: "/creggan-no-x.png", paths: [], strokeWidth: 4 }));
+
+  // keep a PNG snapshot so we can email it even when canvases are unmounted
+  const [mapA, _setMapA] = useState(loadLS("mapA", {
+    imageUrl: "/garden-city-map-with-x.png", paths: [], strokeWidth: 4, png: ""
+  }));
+  const [mapB, _setMapB] = useState(loadLS("mapB", {
+    imageUrl: "/creggan-no-x.png", paths: [], strokeWidth: 4, png: ""
+  }));
+
+  // setters that accept updater or value
+  const setMapA = (updater) => {
+    _setMapA(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveLS("mapA", next);
+      return next;
+    });
+  };
+  const setMapB = (updater) => {
+    _setMapB(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveLS("mapB", next);
+      return next;
+    });
+  };
+
   const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => saveLS("step", step), [step]);
   useEffect(() => saveLS("contact", contact), [contact]);
   useEffect(() => saveLS("answers", answers), [answers]);
-  useEffect(() => saveLS("mapA", mapA), [mapA]);
-  useEffect(() => saveLS("mapB", mapB), [mapB]);
 
   const totalSteps = 1 + QUESTIONS.length + 2 + 1;
 
@@ -313,15 +343,38 @@ export default function App() {
 
   const onAnswer = (qid, val) => setAnswers((s) => ({ ...s, [qid]: val }));
 
+  // capture PNG when leaving a map step
+  const captureMapPNGIfNeeded = () => {
+    if (atMap1) {
+      const el = document.getElementById("mapA");
+      if (el) setMapA(prev => ({ ...prev, png: el.toDataURL("image/png") }));
+    }
+    if (atMap2) {
+      const el = document.getElementById("mapB");
+      if (el) setMapB(prev => ({ ...prev, png: el.toDataURL("image/png") }));
+    }
+  };
+
+  const goNext = () => {
+    captureMapPNGIfNeeded();
+    setStep((s) => Math.min(totalSteps - 1, s + 1));
+  };
+  const goBack = () => {
+    // also capture in case they drew and hit back
+    captureMapPNGIfNeeded();
+    setStep((s) => Math.max(0, s - 1));
+  };
+
   const submitEmail = async () => {
-    const mapACanvas = document.getElementById("mapA");
-    const mapBCanvas = document.getElementById("mapB");
+    // Ensure final capture just before submit
+    captureMapPNGIfNeeded();
+
     const payload = {
       subject: `Bee Flyer Application - ${contact.name || "Unknown"}`,
       contact,
       answers,
-      mapA: { ...mapA, png: mapACanvas?.toDataURL("image/png") },
-      mapB: { ...mapB, png: mapBCanvas?.toDataURL("image/png") },
+      mapA,
+      mapB,
     };
     try {
       const res = await fetch("/send-email", {
@@ -385,8 +438,10 @@ export default function App() {
 
         {atMap1 && (
           <MapSketch
-            value={mapA}
-            onChange={setMapA}
+            value={{...mapA, __attachPNGGetter:(fn)=>{ /* no-op; legacy hook */ }}}
+            onChange={(updater)=>{
+              setMapA(prev => (typeof updater === 'function' ? updater(prev) : updater));
+            }}
             title="Map Task 1"
             helper="Draw a line for the route you would take to deliver to every house in the most efficient way. Start at the X."
             canvasId="mapA"
@@ -395,8 +450,10 @@ export default function App() {
 
         {atMap2 && (
           <MapSketch
-            value={mapB}
-            onChange={setMapB}
+            value={{...mapB, __attachPNGGetter:(fn)=>{ /* no-op */ }}}
+            onChange={(updater)=>{
+              setMapB(prev => (typeof updater === 'function' ? updater(prev) : updater));
+            }}
             title="Map Task 2"
             helper="Draw your route again on this map. First, draw an X where you would start, then draw the route."
             canvasId="mapB"
@@ -416,8 +473,8 @@ export default function App() {
         <hr className="sep" />
 
         <div className="btn-group">
-          <button className="btn btn-outline" onClick={()=>setStep((s)=>Math.max(0,s-1))} disabled={step===0}>Back</button>
-          <button className="btn btn-primary" disabled={!canContinue} onClick={()=>setStep((s)=>Math.min(totalSteps-1,s+1))}>
+          <button className="btn btn-outline" onClick={goBack} disabled={step===0}>Back</button>
+          <button className="btn btn-primary" disabled={!canContinue} onClick={goNext}>
             {atReview ? "Finish" : "Continue"}
           </button>
         </div>
