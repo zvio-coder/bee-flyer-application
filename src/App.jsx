@@ -57,15 +57,13 @@ const loadLS = (k, fallback) => {
   catch { return fallback; }
 };
 const clearAllLS = () => {
-  // remove only our keys
-  const toRemove = [];
+  const keys = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
-    if (k && k.startsWith(LS_PREFIX)) toRemove.push(k);
+    if (k && k.startsWith(LS_PREFIX)) keys.push(k);
   }
-  toRemove.forEach((k) => localStorage.removeItem(k));
+  keys.forEach(k => localStorage.removeItem(k));
 };
-
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 const validatePhone = (phone) => /^(\+\d{7,15}|0\d{9,11}|\d{7,15})$/.test(phone);
 
@@ -75,15 +73,14 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
   const imgRef = useRef(null);
 
   const [imageUrl, setImageUrl] = useState(value?.imageUrl || "");
-  const [paths, setPaths] = useState(value?.paths || []); // each path: [{x,y}...]
+  const [paths, setPaths] = useState(value?.paths || []);
   const [current, setCurrent] = useState([]);
   const [strokeWidth, setStrokeWidth] = useState(value?.strokeWidth || 4);
 
-  // send changes upward
+  // ✅ FIX: correctly pass new state up (no accidental prev())
   useEffect(() => {
-    onChange?.((prev) => ({ ...(typeof prev === "function" ? prev() : prev), imageUrl, paths, strokeWidth }));
-    // eslint-disable-next-line
-  }, [imageUrl, paths, strokeWidth]);
+    onChange?.((prev) => ({ ...prev, imageUrl, paths, strokeWidth }));
+  }, [imageUrl, paths, strokeWidth, onChange]);
 
   const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 
@@ -119,8 +116,12 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const parent = canvas.parentElement;
+
     const w = parent.clientWidth;
-    const h = Math.round(w * 0.66);
+    const byAspect = Math.round(w * 0.9);               // wider/taller than before
+    const byViewport = Math.round(window.innerHeight * 0.7); // up to 70% viewport height
+    const h = Math.max(260, Math.min(byAspect, byViewport));
+
     canvas.width = Math.max(1, Math.floor(w * dpr));
     canvas.height = Math.max(1, Math.floor(h * dpr));
     canvas.style.width = `${w}px`;
@@ -140,14 +141,26 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
   const getPoint = (e) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
-    const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+    const cx = ("touches" in e ? e.touches[0].clientX : e.clientX);
+    const cy = ("touches" in e ? e.touches[0].clientY : e.clientY);
+    const x = cx - rect.left;
+    const y = cy - rect.top;
     return { x: x * dpr, y: y * dpr };
   };
 
   const start = (e) => { e.preventDefault(); setCurrent([getPoint(e)]); };
-  const move  = (e) => { if (current.length) setCurrent((c)=>[...c, getPoint(e)]); };
-  const end   = () => { if (current.length){ setPaths((p)=>[...p, current]); setCurrent([]);} };
+  const move  = (e) => {
+    if (!current.length) return;
+    if ("touches" in e) e.preventDefault();   // stop the page from scrolling while drawing
+    setCurrent((c)=>[...c, getPoint(e)]);
+  };
+  const end   = (e) => {
+    if (current.length){
+      if ("touches" in e) e.preventDefault();
+      setPaths((p)=>[...p, current]);
+      setCurrent([]);
+    }
+  };
 
   const undo = () => setPaths((p) => p.slice(0, -1));
   const clearAll = () => setPaths([]);
@@ -157,12 +170,6 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     if (!canvas) return null;
     return canvas.toDataURL("image/png");
   };
-
-  useEffect(() => {
-    if (typeof value?.__attachPNGGetter === "function") {
-      value.__attachPNGGetter(() => toPNG());
-    }
-  }, [value]);
 
   const downloadPNG = () => {
     const link = document.createElement("a");
@@ -229,7 +236,7 @@ function DobPicker({ value, onChange }) {
     const { y, m, d } = state;
     if (y && m && d) onChange(`${y}-${m}-${d}`);
     else onChange("");
-  }, [state]);
+  }, [state, onChange]);
 
   const months = [
     ["01","Jan"],["02","Feb"],["03","Mar"],["04","Apr"],["05","May"],["06","Jun"],
@@ -302,7 +309,6 @@ export default function App() {
     imageUrl: "/creggan-no-x.png", paths: [], strokeWidth: 4, png: ""
   }));
 
-  // setters that accept updater or value and persist
   const setMapA = (updater) => {
     _setMapA(prev => {
       const next = typeof updater === "function" ? updater(prev) : updater;
@@ -365,14 +371,8 @@ export default function App() {
     }
   };
 
-  const goNext = () => {
-    captureMapPNGIfNeeded();
-    setStep((s) => Math.min(totalSteps - 1, s + 1));
-  };
-  const goBack = () => {
-    captureMapPNGIfNeeded();
-    setStep((s) => Math.max(0, s - 1));
-  };
+  const goNext = () => { captureMapPNGIfNeeded(); setStep((s) => Math.min(totalSteps - 1, s + 1)); };
+  const goBack = () => { captureMapPNGIfNeeded(); setStep((s) => Math.max(0, s - 1)); };
 
   const resetAll = () => {
     if (!confirm("Start again? This will clear all your answers and drawings.")) return;
@@ -386,9 +386,7 @@ export default function App() {
   };
 
   const submitEmail = async () => {
-    // Ensure final capture just before submit
     captureMapPNGIfNeeded();
-
     const payload = {
       subject: `Bee Flyer Application - ${contact.name || "Unknown"}`,
       contact,
@@ -404,7 +402,7 @@ export default function App() {
       });
       if (!res.ok) throw new Error("Send failed");
       setSubmitted(true);
-    } catch (e) {
+    } catch {
       alert("Could not send application automatically. Please try again later.");
     }
   };
@@ -426,7 +424,7 @@ export default function App() {
   return (
     <div className="app-wrap">
       <div className="card">
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,flexWrap:'wrap'}}>
           <div>
             <h1 style={{margin:0}}>Bee Flyer – Application</h1>
             <p className="subtle" style={{margin:'4px 0 0'}}>Mobile-friendly questionnaire. Your progress saves automatically.</p>
@@ -466,10 +464,8 @@ export default function App() {
 
         {atMap1 && (
           <MapSketch
-            value={{...mapA, __attachPNGGetter:(fn)=>{ /* no-op; legacy hook */ }}}
-            onChange={(updater)=>{
-              setMapA(prev => (typeof updater === 'function' ? updater(prev) : updater));
-            }}
+            value={mapA}
+            onChange={(updater)=>{ setMapA(prev => (typeof updater === 'function' ? updater(prev) : updater)); }}
             title="Map Task 1"
             helper="Draw a line for the route you would take to deliver to every house in the most efficient way. Start at the X."
             canvasId="mapA"
@@ -478,10 +474,8 @@ export default function App() {
 
         {atMap2 && (
           <MapSketch
-            value={{...mapB, __attachPNGGetter:(fn)=>{ /* no-op */ }}}
-            onChange={(updater)=>{
-              setMapB(prev => (typeof updater === 'function' ? updater(prev) : updater));
-            }}
+            value={mapB}
+            onChange={(updater)=>{ setMapB(prev => (typeof updater === 'function' ? updater(prev) : updater)); }}
             title="Map Task 2"
             helper="Draw your route again on this map. First, draw an X where you would start, then draw the route."
             canvasId="mapB"
@@ -513,7 +507,6 @@ export default function App() {
 
 /* ============ Question / Summary ============ */
 function QuestionStep({ question, answer, onAnswer }) {
-  // Custom DOB picker for the date step
   if (question.id === "dob" && question.type === "date") {
     return (
       <section className="panel">
