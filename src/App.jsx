@@ -67,13 +67,20 @@ const clearAllLS = () => {
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 const validatePhone = (phone) => /^(\+\d{7,15}|0\d{9,11}|\d{7,15})$/.test(phone);
 
-/* ======== Map constants + migration ======== */
-const MAP_A_URL = "/garden-city-map-with-x.png";
-const MAP_B_URL = "/creggan-no-x.png";
+/* ======== Absolute URLs for images (no ambiguity) ======== */
+const ABS_URL = (path) =>
+  (typeof window !== "undefined"
+    ? new URL(path, window.location.origin).toString()
+    : path);
 
+// exact filenames in /public
+const MAP_A_URL = ABS_URL("/garden-city-map-with-x.png");
+const MAP_B_URL = ABS_URL("/creggan-no-x.png");
+
+/* Migrate any old saved paths (with spaces) to the correct absolute URLs */
 const migrateUrl = (url) => {
   if (!url) return url;
-  const t = String(url).toLowerCase().trim();
+  const t = String(url).toLowerCase();
   if (t.includes("garden city map with x.png")) return MAP_A_URL;
   if (t.includes("creggan no x.png")) return MAP_B_URL;
   return url;
@@ -91,51 +98,11 @@ const normalizeMap = (val, fallbackUrl) => {
   };
 };
 
-/* ======== Robust image preloader (tries multiple path variants) ======== */
-function preloadImageWithFallbacks(src, onDone) {
-  if (!src) return onDone(null);
-
-  const basePath = (typeof window !== "undefined")
-    ? (window.location.pathname.endsWith("/")
-        ? window.location.pathname
-        : window.location.pathname.substring(0, window.location.pathname.lastIndexOf("/") + 1))
-    : "/";
-
-  const clean = (s) => s.replace(/^\/+/, ""); // strip leading slashes for relative variants
-  const bust = `?v=1`; // tiny cache-buster
-
-  const variants = [
-    src,                                 // absolute (as provided)
-    "/" + clean(src),                     // absolute ensured
-    basePath + clean(src),                // base-dir relative
-    "./" + clean(src),                    // relative dot
-    encodeURI(src),                       // encoded absolute
-    "/" + encodeURI(clean(src)),          // encoded absolute ensured
-    basePath + encodeURI(clean(src)),     // encoded base-dir
-    "./" + encodeURI(clean(src)),         // encoded relative dot
-  ]
-    .map(v => v.includes("?") ? v : v + bust);
-
-  const tried = new Set();
-  const queue = variants.filter(v => v && !tried.has(v) && (tried.add(v), true));
-
-  const step = () => {
-    if (!queue.length) return onDone(null);
-    const url = queue.shift();
-    const img = new Image();
-    img.onload = () => onDone(img);
-    img.onerror = () => step();
-    img.src = url;
-  };
-  step();
-}
-
-/* ============ Map Sketch (internal state for instant strokes) ============ */
+/* ============ Map Sketch (instant strokes, simple loader) ============ */
 function MapSketch({ value, onChange, title, helper, canvasId }) {
   const canvasRef = useRef(null);
   const roRef = useRef(null);
 
-  // Internal state so first stroke persists immediately
   const [imageUrl, setImageUrl] = useState(migrateUrl(value?.imageUrl || ""));
   const [pathsState, setPathsState] = useState(Array.isArray(value?.paths) ? value.paths : []);
   const [strokeWidth, setStrokeWidth] = useState(
@@ -144,23 +111,23 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
   const [imgEl, setImgEl] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Keep internal state in sync if parent changes (e.g., Start again)
+  // stay in sync if parent resets
   useEffect(() => { setImageUrl(migrateUrl(value?.imageUrl || "")); }, [value?.imageUrl]);
   useEffect(() => { setPathsState(Array.isArray(value?.paths) ? value.paths : []); }, [value?.paths]);
   useEffect(() => { setStrokeWidth(typeof value?.strokeWidth === "number" ? value.strokeWidth : 4); }, [value?.strokeWidth]);
 
-  // Preload the image robustly
+  // simple preload (absolute URL)
   useEffect(() => {
     setLoading(true);
     setImgEl(null);
     if (!imageUrl) { setLoading(false); return; }
-    preloadImageWithFallbacks(imageUrl, (img) => {
-      setImgEl(img);
-      setLoading(false);
-    });
+    const img = new Image();
+    img.onload = () => { setImgEl(img); setLoading(false); };
+    img.onerror = () => { setImgEl(null); setLoading(false); };
+    img.src = imageUrl;
   }, [imageUrl]);
 
-  // Push up to parent whenever data changes
+  // notify parent when our data changes
   useEffect(() => {
     onChange?.({ imageUrl, paths: pathsState, strokeWidth, png: value?.png || "" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -186,7 +153,7 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     ctx.strokeStyle = "#ff6666";
     ctx.lineWidth = strokeWidth * dpr;
 
-    // committed paths
+    // committed
     for (const p of pathsState) {
       if (!p || !p.length) continue;
       ctx.beginPath();
@@ -195,7 +162,7 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
       ctx.stroke();
     }
 
-    // in-progress stroke
+    // live
     if (currentStroke && currentStroke.length) {
       ctx.beginPath();
       ctx.moveTo(currentStroke[0].x, currentStroke[0].y);
@@ -223,7 +190,6 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     drawAll();
   };
 
-  // ResizeObserver (safe)
   useEffect(() => {
     resizeCanvas();
     const parent = canvasRef.current?.parentElement;
@@ -239,10 +205,9 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dpr]);
 
-  // Redraw on image / paths / width
   useEffect(() => { drawAll(); }, [imgEl, pathsState, strokeWidth]); // eslint-disable-line
 
-  // Drawing
+  // drawing
   const currentRef = useRef([]);
   const getPoint = (e) => {
     const canvas = canvasRef.current;
@@ -254,25 +219,24 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     const y = cy - rect.top;
     return { x: x * dpr, y: y * dpr };
   };
-
   const start = (e) => { e.preventDefault(); currentRef.current = [getPoint(e)]; drawAll(currentRef.current); };
   const move  = (e) => {
     if (!currentRef.current.length) return;
     if ("touches" in e) e.preventDefault();
     currentRef.current = [...currentRef.current, getPoint(e)];
-    drawAll(currentRef.current); // draw live
+    drawAll(currentRef.current);
   };
   const end   = (e) => {
     if (!currentRef.current.length) return;
     if ("touches" in e) e.preventDefault();
     const next = [...pathsState, currentRef.current];
     currentRef.current = [];
-    setPathsState(next);        // commit locally (instant persist)
-    drawAll();                  // redraw all committed
+    setPathsState(next);
+    drawAll();
   };
 
-  const undo = () => { setPathsState((p) => p.slice(0, -1)); };
-  const clearAll = () => { setPathsState([]); };
+  const undo = () => setPathsState((p) => p.slice(0, -1));
+  const clearAll = () => setPathsState([]);
 
   const toPNG = () => {
     const canvas = canvasRef.current;
@@ -300,10 +264,8 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
         <div className="right">
           <div className="range">
             <span className="subtle">Width</span>
-            <input
-              type="range" min="2" max="14" value={strokeWidth}
-              onChange={(e)=>setStrokeWidth(parseInt(e.target.value,10))}
-            />
+            <input type="range" min="2" max="14" value={strokeWidth}
+                   onChange={(e)=>setStrokeWidth(parseInt(e.target.value,10))}/>
           </div>
           <button className="btn btn-outline" onClick={undo} title="Undo last stroke">Undo</button>
           <button className="btn btn-danger" onClick={clearAll} title="Clear drawing">Clear</button>
@@ -323,8 +285,8 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
           onTouchEnd={end}
         />
       </div>
-      {loading && (<div className="subtle" style={{marginTop:8}}>(Loading map…)</div>)}
-      {!loading && !imgEl && (<div className="subtle" style={{marginTop:8,color:"#ffbdbd"}}>(Map image failed to load.)</div>)}
+      {loading && <div className="subtle" style={{marginTop:8}}>(Loading map…)</div>}
+      {!loading && !imgEl && <div className="subtle" style={{marginTop:8, color:"#ffbdbd"}}>(Map image failed to load.)</div>}
     </div>
   );
 }
@@ -451,7 +413,7 @@ export default function App() {
 
   const onAnswer = (qid, val) => setAnswers((s) => ({ ...s, [qid]: val }));
 
-  // Capture PNG when leaving a map step
+  // Save PNG when leaving a map step
   const captureMapPNGIfNeeded = () => {
     if (atMap1) {
       const el = document.getElementById("mapA");
