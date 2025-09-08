@@ -1,67 +1,63 @@
-// Cloudflare Pages Function (runs at /send-email)
-// No npm packages needed. Uses Resend's REST API directly.
-
+// functions/send-email.js
 export async function onRequestPost({ request, env }) {
   try {
-    if (!env.RESEND_API_KEY) {
-      return json({ ok: false, error: 'RESEND_API_KEY not set' }, 500)
-    }
+    const body = await request.json();
 
-    const { contact, answers, mapA, mapB, subject } = await request.json()
+    // Build simple HTML
+    const answersHtml = `<pre style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; white-space: pre-wrap; font-size: 14px;">${
+      body?.answers ? escapeHtml(JSON.stringify(body.answers, null, 2)) : ""
+    }</pre>`;
+
+    const mapAImg = body?.mapA?.png
+      ? `<div><b>Map A:</b><br/><img src="${body.mapA.png}" width="500" style="max-width:100%;"/></div>`
+      : `<div><b>Map A:</b> (no input)</div>`;
+
+    const mapBImg = body?.mapB?.png
+      ? `<div><b>Map B:</b><br/><img src="${body.mapB.png}" width="500" style="max-width:100%;"/></div>`
+      : `<div><b>Map B:</b> (no input)</div>`;
 
     const html = `
-      <h2>Bee Flyer Application</h2>
-      <p><strong>Name:</strong> ${escape(contact?.name)}</p>
-      <p><strong>Phone:</strong> ${escape(contact?.phone)}</p>
-      <p><strong>Email:</strong> ${escape(contact?.email)}</p>
-      <hr/>
-      <h3>Answers</h3>
-      <ul>
-        ${Object.entries(answers || {})
-          .map(([q, a]) => `<li><strong>${escape(q)}</strong>: ${Array.isArray(a) ? a.map(escape).join(', ') : escape(a ?? '—')}</li>`)
-          .join('')}
-      </ul>
-      <hr/>
-      <h3>Map A</h3>
-      ${mapA?.png ? `<img src="${mapA.png}" alt="Map A drawing" style="max-width:100%;"/>` : '<p>No drawing</p>'}
-      <h3>Map B</h3>
-      ${mapB?.png ? `<img src="${mapB.png}" alt="Map B drawing" style="max-width:100%;"/>` : '<p>No drawing</p>'}
-    `
+      <h2>New Bee Flyer Application</h2>
+      <p><b>Name:</b> ${escapeHtml(body?.contact?.name || "")}</p>
+      <p><b>Phone:</b> ${escapeHtml(body?.contact?.phone || "")}</p>
+      <p><b>Email:</b> ${escapeHtml(body?.contact?.email || "")}</p>
+      ${answersHtml}
+      ${mapAImg}
+      <br/>
+      ${mapBImg}
+    `;
 
-    // Send email via Resend REST API
-    const resp = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
+    // Resend REST API (use Workers-native fetch, not the Node SDK)
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
       headers: {
-        'Authorization': `Bearer ${env.RESEND_API_KEY}`,
-        'Content-Type': 'application/json'
+        "Authorization": `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: 'Bee Flyer <onboarding@resend.dev>', // swap to your verified sender later
-        to: ['zvio@hotmail.co.uk'],                // add more recipients later if needed
-        subject: subject || `Bee Flyer Application - ${contact?.name || 'Unknown'}`,
-        html
-      })
-    })
+        from: "Bee Flyer <onboarding@resend.dev>",  // ok for testing
+        to: ["zvio@hotmail.co.uk", "flyerbee4@gmail.com"], // multiple recipients
+        subject: body?.subject || "Bee Flyer Application",
+        html,
+      }),
+    });
 
-    if (!resp.ok) {
-      const err = await resp.text()
-      return json({ ok: false, error: 'Resend error', details: err }, 500)
+    if (!res.ok) {
+      const txt = await res.text();
+      return new Response(`Resend error: ${txt}`, { status: 500 });
     }
 
-    return json({ ok: true })
-  } catch (e) {
-    return json({ ok: false, error: 'Server error', details: String(e) }, 500)
+    return new Response("OK", { status: 200 });
+  } catch (err) {
+    return new Response("Error sending email", { status: 500 });
   }
 }
 
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  })
-}
-
-function escape(v) {
-  return String(v ?? '')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
