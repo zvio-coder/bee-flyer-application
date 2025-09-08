@@ -60,26 +60,21 @@ const QUESTIONS = [
 const lsKey = (k) => `leaflet_q_${k}`;
 const saveLS = (k, v) => localStorage.setItem(lsKey(k), JSON.stringify(v));
 const loadLS = (k, fallback) => {
-  try {
-    const raw = localStorage.getItem(lsKey(k));
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
-  }
+  try { const raw = localStorage.getItem(lsKey(k)); return raw ? JSON.parse(raw) : fallback; }
+  catch { return fallback; }
 };
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 const validatePhone = (phone) => /^(\+\d{7,15}|0\d{9,11}|\d{7,15})$/.test(phone);
 
-/* ============ Map Sketch ============ 
-   Tool supports 'pen' and 'eraser' via globalCompositeOperation */
+/* ============ Map Sketch (Pen only, no eraser) ============ */
 function MapSketch({ value, onChange, title, helper, canvasId }) {
   const canvasRef = useRef(null);
   const imgRef = useRef(null);
 
+  // paths: array of arrays [{x,y}...]
   const [imageUrl, setImageUrl] = useState(value?.imageUrl || "");
-  const [paths, setPaths] = useState(value?.paths || []); // each: {tool:'pen'|'eraser', width:number, points:[{x,y},...]}
-  const [current, setCurrent] = useState(null);           // {tool,width,points:[]}
-  const [tool, setTool] = useState("pen");                // 'pen' | 'eraser'
+  const [paths, setPaths] = useState(value?.paths || []);
+  const [current, setCurrent] = useState([]);
   const [strokeWidth, setStrokeWidth] = useState(value?.strokeWidth || 4);
 
   useEffect(() => onChange?.({ imageUrl, paths, strokeWidth }), [imageUrl, paths, strokeWidth]);
@@ -91,28 +86,22 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     const ctx = canvas?.getContext("2d");
     if (!ctx) return;
 
-    // clear and draw background
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (imgRef.current && imgRef.current.complete && imageUrl) {
       ctx.globalCompositeOperation = "source-over";
       ctx.drawImage(imgRef.current, 0, 0, canvas.width, canvas.height);
     }
 
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#ff6666";
+    ctx.lineWidth = strokeWidth * dpr;
+
     const renderPath = (p) => {
-      if (!p || !p.points?.length) return;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.lineWidth = (p.width || strokeWidth) * dpr;
-      if (p.tool === "eraser") {
-        ctx.globalCompositeOperation = "destination-out";
-        ctx.strokeStyle = "rgba(0,0,0,1)";
-      } else {
-        ctx.globalCompositeOperation = "source-over";
-        ctx.strokeStyle = "#ff6666";
-      }
+      if (!p || !p.length) return;
       ctx.beginPath();
-      ctx.moveTo(p.points[0].x, p.points[0].y);
-      for (let i = 1; i < p.points.length; i++) ctx.lineTo(p.points[i].x, p.points[i].y);
+      ctx.moveTo(p[0].x, p[0].y);
+      for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
       ctx.stroke();
     };
 
@@ -140,7 +129,7 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     return () => ro.disconnect();
   }, [dpr]);
 
-  useEffect(() => { drawAll(); }, [imageUrl, paths, current, strokeWidth, tool]);
+  useEffect(() => { drawAll(); }, [imageUrl, paths, current, strokeWidth]);
 
   const getPoint = (e) => {
     const canvas = canvasRef.current;
@@ -150,19 +139,9 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     return { x: x * dpr, y: y * dpr };
   };
 
-  const start = (e) => {
-    e.preventDefault();
-    setCurrent({ tool, width: strokeWidth, points: [getPoint(e)] });
-  };
-  const move = (e) => {
-    if (!current) return;
-    setCurrent((c) => ({ ...c, points: [...c.points, getPoint(e)] }));
-  };
-  const end = () => {
-    if (!current) return;
-    setPaths((p) => [...p, current]);
-    setCurrent(null);
-  };
+  const start = (e) => { e.preventDefault(); setCurrent([getPoint(e)]); };
+  const move  = (e) => { if (current.length) setCurrent((c)=>[...c, getPoint(e)]); };
+  const end   = () => { if (current.length){ setPaths((p)=>[...p, current]); setCurrent([]);} };
 
   const undo = () => setPaths((p) => p.slice(0, -1));
   const clearAll = () => setPaths([]);
@@ -184,25 +163,6 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
           </div>
         </div>
         <div className="right">
-          <div className="tool-toggle" role="tablist" aria-label="Tool">
-            <button
-              aria-pressed={tool==='pen'}
-              className={tool==='pen' ? 'active' : ''}
-              onClick={() => setTool('pen')}
-              title="Pen"
-            >
-              ✏️ Pen
-            </button>
-            <button
-              aria-pressed={tool==='eraser'}
-              className={tool==='eraser' ? 'active' : ''}
-              onClick={() => setTool('eraser')}
-              title="Eraser"
-            >
-              🧽 Eraser
-            </button>
-          </div>
-
           <div className="range">
             <span className="subtle">Width</span>
             <input type="range" min="2" max="14" value={strokeWidth}
@@ -216,14 +176,7 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
       </div>
 
       {/* hidden image source */}
-      <img
-        ref={imgRef}
-        src={imageUrl}
-        onLoad={drawAll}
-        onError={drawAll}
-        alt=""
-        style={{ display: "none" }}
-      />
+      <img ref={imgRef} src={imageUrl} onLoad={drawAll} onError={drawAll} alt="" style={{ display: "none" }} />
 
       <div className="canvas-wrap" onMouseLeave={end}>
         <canvas
@@ -236,6 +189,84 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
           onTouchMove={move}
           onTouchEnd={end}
         />
+      </div>
+    </div>
+  );
+}
+
+/* ===== Custom DOB Picker: Year → Month → Day ===== */
+function DobPicker({ value, onChange }) {
+  // value is ISO yyyy-mm-dd or ""
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const minYear = 1940;         // adjust if you want
+  const maxYear = currentYear;  // allow current year, though candidates will pick earlier
+
+  const parse = (iso) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+    if (!m) return { y: "", m: "", d: "" };
+    return { y: m[1], m: m[2], d: m[3] };
+  };
+  const [state, setState] = useState(parse(value));
+
+  useEffect(() => {
+    const { y, m, d } = state;
+    if (y && m && d) onChange(`${y}-${m}-${d}`);
+    else onChange("");
+  }, [state]);
+
+  const months = [
+    ["01","Jan"],["02","Feb"],["03","Mar"],["04","Apr"],["05","May"],["06","Jun"],
+    ["07","Jul"],["08","Aug"],["09","Sep"],["10","Oct"],["11","Nov"],["12","Dec"]
+  ];
+
+  const daysIn = (y, m) => {
+    if (!y || !m) return 31;
+    return new Date(parseInt(y,10), parseInt(m,10), 0).getDate();
+  };
+
+  const maxDay = daysIn(state.y, state.m);
+  const dayOptions = Array.from({length:maxDay}, (_,i)=>String(i+1).padStart(2,"0"));
+
+  return (
+    <div className="dob-row">
+      <div>
+        <label className="block">Year</label>
+        <select
+          className="input"
+          value={state.y}
+          onChange={(e)=>setState(s=>({ ...s, y:e.target.value, d: s.d && parseInt(s.d,10) > daysIn(e.target.value, s.m) ? "" : s.d }))}
+        >
+          <option value="">Year…</option>
+          {Array.from({length:(maxYear-minYear+1)}, (_,i)=>String(maxYear - i)).map(y=>(
+            <option key={y} value={y}>{y}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="block">Month</label>
+        <select
+          className="input"
+          value={state.m}
+          onChange={(e)=>setState(s=>({ ...s, m:e.target.value, d: s.d && parseInt(s.d,10) > daysIn(s.y, e.target.value) ? "" : s.d }))}
+        >
+          <option value="">Month…</option>
+          {months.map(([val, label])=>(
+            <option key={val} value={val}>{label}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <label className="block">Day</label>
+        <select
+          className="input"
+          value={state.d}
+          onChange={(e)=>setState(s=>({ ...s, d:e.target.value }))}
+          disabled={!state.y || !state.m}
+        >
+          <option value="">{!state.y || !state.m ? "Select year & month first" : "Day…"}</option>
+          {dayOptions.map(d=> <option key={d} value={d}>{d}</option>)}
+        </select>
       </div>
     </div>
   );
@@ -401,6 +432,19 @@ export default function App() {
 
 /* ============ Question / Summary ============ */
 function QuestionStep({ question, answer, onAnswer }) {
+  // Replace the native <input type="date"> with a custom DOB picker
+  if (question.id === "dob" && question.type === "date") {
+    return (
+      <section className="panel">
+        <div style={{fontWeight:700, marginBottom:8}}>{question.label}{question.required && " *"}</div>
+        <DobPicker
+          value={answer || ""}
+          onChange={(val) => onAnswer(question.id, val)}
+        />
+      </section>
+    );
+  }
+
   return (
     <section className="panel">
       <div style={{fontWeight:700, marginBottom:8}}>{question.label}{question.required && " *"}</div>
@@ -450,15 +494,6 @@ function QuestionStep({ question, answer, onAnswer }) {
           value={answer || ""}
           onChange={(e) => onAnswer(question.id, e.target.value)}
           placeholder={question.placeholder}
-        />
-      )}
-
-      {question.type === "date" && (
-        <input
-          type="date"
-          className="input"
-          value={answer || ""}
-          onChange={(e) => onAnswer(question.id, e.target.value)}
         />
       )}
     </section>
