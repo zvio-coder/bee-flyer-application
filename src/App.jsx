@@ -67,20 +67,52 @@ const clearAllLS = () => {
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 const validatePhone = (phone) => /^(\+\d{7,15}|0\d{9,11}|\d{7,15})$/.test(phone);
 
-/* ============ Map Sketch (Pen only) ============ */
+/* ======== Map helpers & constants ======== */
+const MAP_A_URL = "/garden-city-map-with-x.png";
+const MAP_B_URL = "/creggan-no-x.png";
+
+/* Fix old saved paths with spaces (migration) */
+const migrateUrl = (url) => {
+  if (!url) return url;
+  const t = String(url).toLowerCase();
+  if (t.includes("garden city map with x.png")) return MAP_A_URL;
+  if (t.includes("creggan no x.png")) return MAP_B_URL;
+  return url;
+};
+
+const normalizeMap = (val, fallbackUrl) => {
+  if (!val || typeof val !== 'object') {
+    return { imageUrl: fallbackUrl, paths: [], strokeWidth: 4, png: "" };
+  }
+  return {
+    imageUrl: migrateUrl(val.imageUrl || fallbackUrl),
+    paths: Array.isArray(val.paths) ? val.paths : [],
+    strokeWidth: typeof val.strokeWidth === "number" ? val.strokeWidth : 4,
+    png: typeof val.png === "string" ? val.png : "",
+  };
+};
+
+/* ============ Map Sketch (with explicit preloading) ============ */
 function MapSketch({ value, onChange, title, helper, canvasId }) {
   const canvasRef = useRef(null);
-  const imgRef = useRef(null);
   const roRef = useRef(null);
+  const [imgEl, setImgEl] = useState(null);
 
-  const [imageUrl, setImageUrl] = useState(value?.imageUrl || "");
-  const [paths, setPaths] = useState(Array.isArray(value?.paths) ? value.paths : []);
-  const [current, setCurrent] = useState([]);
-  const [strokeWidth, setStrokeWidth] = useState(
-    typeof value?.strokeWidth === "number" ? value.strokeWidth : 4
-  );
+  const imageUrl = value?.imageUrl || "";
+  const paths = Array.isArray(value?.paths) ? value.paths : [];
+  const strokeWidth = typeof value?.strokeWidth === "number" ? value.strokeWidth : 4;
 
-  // push a plain object upward (no function confusion)
+  // Preload the image every time imageUrl changes
+  useEffect(() => {
+    if (!imageUrl) { setImgEl(null); return; }
+    const img = new Image();
+    img.onload = () => setImgEl(img);
+    img.onerror = () => setImgEl(null);
+    img.src = imageUrl;
+    // Note: don’t set crossOrigin; we’re same origin
+  }, [imageUrl]);
+
+  // up-propagate plain object whenever drawing settings change
   useEffect(() => {
     onChange?.({
       imageUrl,
@@ -88,7 +120,9 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
       strokeWidth,
       png: typeof value?.png === "string" ? value.png : ""
     });
-  }, [imageUrl, paths, strokeWidth]); // eslint-disable-line
+    // value?.png deliberately read only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageUrl, paths, strokeWidth]);
 
   const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 
@@ -98,31 +132,27 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    try {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (imgRef.current && imgRef.current.complete && imageUrl) {
-        ctx.globalCompositeOperation = "source-over";
-        ctx.drawImage(imgRef.current, 0, 0, canvas.width, canvas.height);
-      }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.strokeStyle = "#ff6666";
-      ctx.lineWidth = strokeWidth * dpr;
-
-      const renderPath = (p) => {
-        if (!p || !p.length) return;
-        ctx.beginPath();
-        ctx.moveTo(p[0].x, p[0].y);
-        for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
-        ctx.stroke();
-      };
-
-      paths.forEach(renderPath);
-      renderPath(current);
-    } catch {
-      /* ignore draw errors */
+    if (imgEl) {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
     }
+
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#ff6666";
+    ctx.lineWidth = strokeWidth * dpr;
+
+    const renderPath = (p) => {
+      if (!p || !p.length) return;
+      ctx.beginPath();
+      ctx.moveTo(p[0].x, p[0].y);
+      for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
+      ctx.stroke();
+    };
+
+    paths.forEach(renderPath);
   };
 
   const resizeCanvas = () => {
@@ -132,35 +162,39 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     if (!parent) return;
 
     const w = parent.clientWidth || 600;
-    const byAspect = Math.round(w * 0.9);                 // taller than before
-    const byViewport = Math.round(window.innerHeight * 0.7); // up to 70% viewport height
+    const byAspect = Math.round(w * 0.9);
+    const byViewport = Math.round(window.innerHeight * 0.7);
     const h = Math.max(260, Math.min(byAspect, byViewport));
 
     canvas.width = Math.max(1, Math.floor(w * dpr));
     canvas.height = Math.max(1, Math.floor(h * dpr));
     canvas.style.width = `${w}px`;
     canvas.style.height = `${h}px`;
+
     drawAll();
   };
 
+  // set up ResizeObserver safely
   useEffect(() => {
     resizeCanvas();
-
     const parent = canvasRef.current?.parentElement;
     if (parent && typeof ResizeObserver !== "undefined") {
       const ro = new ResizeObserver(() => resizeCanvas());
       ro.observe(parent);
       roRef.current = ro;
     }
-
     return () => {
       try { roRef.current?.disconnect?.(); } catch {}
       roRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dpr]);
 
-  useEffect(() => { drawAll(); }, [imageUrl, paths, current, strokeWidth]);
+  // redraw when image or paths change
+  useEffect(() => { drawAll(); }, [imgEl, paths, strokeWidth]); // eslint-disable-line
 
+  // simple drawing (pen)
+  const [current, setCurrent] = useState([]);
   const getPoint = (e) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -171,33 +205,53 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
     const y = cy - rect.top;
     return { x: x * dpr, y: y * dpr };
   };
-
   const start = (e) => { e.preventDefault(); setCurrent([getPoint(e)]); };
   const move  = (e) => {
     if (!current.length) return;
-    if ("touches" in e) e.preventDefault();   // stop page from scrolling while drawing
-    setCurrent((c)=>[...c, getPoint(e)]);
+    if ("touches" in e) e.preventDefault();
+    setCurrent((c)=>{ const next=[...c, getPoint(e)]; drawStroke(next); return next; });
   };
   const end   = (e) => {
     if (!current.length) return;
     if ("touches" in e) e.preventDefault();
-    setPaths((p)=>[...p, current]);
+    const nextPaths = [...paths, current];
     setCurrent([]);
+    onChange?.({ imageUrl, paths: nextPaths, strokeWidth, png: value?.png || "" });
+    // We push via onChange so parent owns paths; re-draw:
+    setTimeout(drawAll, 0);
   };
 
-  const undo = () => setPaths((p) => p.slice(0, -1));
-  const clearAll = () => setPaths([]);
+  const drawStroke = (p) => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    drawAll(); // redraw bg & previous paths
+    // then draw the in-progress stroke
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#ff6666";
+    ctx.lineWidth = strokeWidth * dpr;
+    if (!p.length) return;
+    ctx.beginPath();
+    ctx.moveTo(p[0].x, p[0].y);
+    for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y);
+    ctx.stroke();
+  };
 
+  const undo = () => {
+    const next = paths.slice(0, -1);
+    onChange?.({ imageUrl, paths: next, strokeWidth, png: value?.png || "" });
+    setTimeout(drawAll, 0);
+  };
+  const clearAll = () => {
+    onChange?.({ imageUrl, paths: [], strokeWidth, png: value?.png || "" });
+    setTimeout(drawAll, 0);
+  };
   const toPNG = () => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    try {
-      return canvas.toDataURL("image/png");
-    } catch {
-      return null;
-    }
+    try { return canvas.toDataURL("image/png"); } catch { return null; }
   };
-
   const downloadPNG = () => {
     const data = toPNG();
     if (!data) return;
@@ -220,16 +274,13 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
           <div className="range">
             <span className="subtle">Width</span>
             <input type="range" min="2" max="14" value={strokeWidth}
-                   onChange={(e)=>setStrokeWidth(parseInt(e.target.value,10))}/>
+                   onChange={(e)=>onChange?.({ imageUrl, paths, strokeWidth: parseInt(e.target.value,10), png: value?.png || "" })}/>
           </div>
           <button className="btn btn-outline" onClick={undo} title="Undo last stroke">Undo</button>
           <button className="btn btn-danger" onClick={clearAll} title="Clear drawing">Clear</button>
           <button className="btn btn-outline" onClick={downloadPNG} title="Download PNG">Download</button>
         </div>
       </div>
-
-      {/* hidden image source */}
-      <img ref={imgRef} src={imageUrl} onLoad={drawAll} onError={drawAll} alt="" style={{ display: "none" }} />
 
       <div className="canvas-wrap" onMouseLeave={end}>
         <canvas
@@ -243,6 +294,11 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
           onTouchEnd={end}
         />
       </div>
+      {!imgEl && (
+        <div className="subtle" style={{marginTop:8}}>
+          (Loading map…)
+        </div>
+      )}
     </div>
   );
 }
@@ -330,24 +386,11 @@ export default function App() {
   const [contact, setContact] = useState(loadLS("contact", { name: "", phone: "", email: "" }));
   const [answers, setAnswers] = useState(loadLS("answers", {}));
 
-  // Normalize any LS data to avoid crashes
-  const normalizeMap = (val, fallbackUrl) => {
-    if (!val || typeof val !== 'object') {
-      return { imageUrl: fallbackUrl, paths: [], strokeWidth: 4, png: "" };
-    }
-    return {
-      imageUrl: val.imageUrl || fallbackUrl,
-      paths: Array.isArray(val.paths) ? val.paths : [],
-      strokeWidth: typeof val.strokeWidth === "number" ? val.strokeWidth : 4,
-      png: typeof val.png === "string" ? val.png : "",
-    };
-  };
-
   const [mapA, setMapA] = useState(() =>
-    normalizeMap(loadLS("mapA", null), "/garden-city-map-with-x.png")
+    normalizeMap(loadLS("mapA", null), MAP_A_URL)
   );
   const [mapB, setMapB] = useState(() =>
-    normalizeMap(loadLS("mapB", null), "/creggan-no-x.png")
+    normalizeMap(loadLS("mapB", null), MAP_B_URL)
   );
 
   const [submitted, setSubmitted] = useState(false);
@@ -359,7 +402,6 @@ export default function App() {
   useEffect(() => saveLS("mapB", mapB), [mapB]);
 
   const totalSteps = 1 + QUESTIONS.length + 2 + 1;
-
   const atContact = step === 0;
   const atQuestions = step > 0 && step <= QUESTIONS.length;
   const atMap1 = step === QUESTIONS.length + 1;
@@ -387,7 +429,7 @@ export default function App() {
 
   const onAnswer = (qid, val) => setAnswers((s) => ({ ...s, [qid]: val }));
 
-  // Capture PNG when leaving a map step so email always has drawings
+  // Capture PNG when leaving a map step
   const captureMapPNGIfNeeded = () => {
     if (atMap1) {
       const el = document.getElementById("mapA");
@@ -407,8 +449,8 @@ export default function App() {
     clearAllLS();
     setContact({ name: "", phone: "", email: "" });
     setAnswers({});
-    setMapA({ imageUrl: "/garden-city-map-with-x.png", paths: [], strokeWidth: 4, png: "" });
-    setMapB({ imageUrl: "/creggan-no-x.png", paths: [], strokeWidth: 4, png: "" });
+    setMapA({ imageUrl: MAP_A_URL, paths: [], strokeWidth: 4, png: "" });
+    setMapB({ imageUrl: MAP_B_URL, paths: [], strokeWidth: 4, png: "" });
     setSubmitted(false);
     setStep(0);
   };
@@ -493,7 +535,7 @@ export default function App() {
         {atMap1 && (
           <MapSketch
             value={mapA}
-            onChange={(v)=> setMapA(prev => ({ ...prev, ...v }))}
+            onChange={(v)=> setMapA(prev => ({ ...prev, ...normalizeMap(v, MAP_A_URL) }))}
             title="Map Task 1"
             helper="Draw a line for the route you would take to deliver to every house in the most efficient way. Start at the X."
             canvasId="mapA"
@@ -503,7 +545,7 @@ export default function App() {
         {atMap2 && (
           <MapSketch
             value={mapB}
-            onChange={(v)=> setMapB(prev => ({ ...prev, ...v }))}
+            onChange={(v)=> setMapB(prev => ({ ...prev, ...normalizeMap(v, MAP_B_URL) }))}
             title="Map Task 2"
             helper="Draw your route again on this map. First, draw an X where you would start, then draw the route."
             canvasId="mapB"
