@@ -36,8 +36,8 @@ export async function onRequestPost({ request, env }) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        from: 'Bee Flyer <onboarding@resend.dev>', // switch to your verified sender later
-        to: ['zvio@hotmail.co.uk'],                // add more recipients later if you want
+        from: 'Bee Flyer <onboarding@resend.dev>', // swap to your verified sender later
+        to: ['zvio@hotmail.co.uk'],                // add more recipients later if needed
         subject: subject || `Bee Flyer Application - ${contact?.name || 'Unknown'}`,
         html
       })
