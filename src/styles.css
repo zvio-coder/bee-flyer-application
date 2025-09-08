@@ -16,9 +16,9 @@ html, body {
   margin:0;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
   color:var(--text);
-  /* Background image from /public with dark overlay for readability */
+  /* Background image from /public with LIGHT overlay for readability */
   background:
-    linear-gradient(180deg, rgba(11,18,32,.90), rgba(11,18,32,.92)),
+    linear-gradient(180deg, rgba(11,18,32,.40), rgba(11,18,32,.50)),
     url('/bg-question.png') center / cover fixed no-repeat;
 }
 
@@ -112,7 +112,7 @@ label.block{display:block;margin:0 0 6px;font-size:14px;color:var(--muted)}
   border-radius:16px;
   overflow:hidden;
   background:#0e1730;
-  touch-action: none;     /* critical to stop page panning while drawing */
+  touch-action: none;     /* stop page panning while drawing */
 }
 
 /* Toolbar */
