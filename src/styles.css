@@ -2,7 +2,7 @@
   --bg:#0b1220;
   --card:#111a2d;
   --muted:#8ca0c4;
-  --text:#e7eeff;
+  --text:#e7eeff;           /* white-ish text for contrast */
   --accent:#ffb703;
   --accent-2:#46c2a9;
   --danger:#ef4444;
@@ -61,12 +61,14 @@ label.block{display:block;margin:0 0 6px;font-size:14px;color:var(--muted)}
 
 .badge{
   display:inline-block;
-  padding:8px 12px;
+  padding:10px 14px;
   border:1px solid var(--border);
   border-radius:12px;
   cursor:pointer;
   background:#0e1730;
-  margin:4px 4px 0 0;
+  margin:4px 6px 0 0;
+  color: var(--text);      /* ensure white text on dark */
+  font-weight: 600;
 }
 .badge.active{border-color:var(--accent-2); background:rgba(70,194,169,0.12)}
 
@@ -105,11 +107,12 @@ label.block{display:block;margin:0 0 6px;font-size:14px;color:var(--muted)}
 /* Toolbar */
 .toolbar{display:flex; align-items:center; justify-content:space-between; gap:12px}
 .toolbar .left, .toolbar .right{display:flex; align-items:center; gap:10px}
-.tool-toggle{display:flex; background:#0e1730; border:1px solid var(--border); border-radius:12px; overflow:hidden}
-.tool-toggle button{padding:10px 14px; background:transparent; color:var(--text); border:none; cursor:pointer}
-.tool-toggle button.active{background:rgba(255,255,255,0.07)}
 .range{display:flex; align-items:center; gap:8px}
 .range input[type="range"]{accent-color:#46c2a9}
 
 hr.sep{height:1px;border:none;background:var(--border);margin:18px 0}
 .list{padding-left:18px; color:#c5d3f1}
+
+/* DOB picker */
+.dob-row{display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px}
+@media (max-width:640px){ .dob-row{ grid-template-columns: 1fr; } }
