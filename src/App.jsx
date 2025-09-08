@@ -57,17 +57,17 @@ const loadLS = (k, fallback) => {
   catch { return fallback; }
 };
 const clearAllLS = () => {
-  const keys = [];
+  const toDelete = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
-    if (k && k.startsWith(LS_PREFIX)) keys.push(k);
+    if (k && k.startsWith(LS_PREFIX)) toDelete.push(k);
   }
-  keys.forEach(k => localStorage.removeItem(k));
+  toDelete.forEach(k => localStorage.removeItem(k));
 };
 const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
 const validatePhone = (phone) => /^(\+\d{7,15}|0\d{9,11}|\d{7,15})$/.test(phone);
 
-/* ======== Absolute URLs for images (no ambiguity) ======== */
+/* ======== Absolute URLs for images ======== */
 const ABS_URL = (path) =>
   (typeof window !== "undefined"
     ? new URL(path, window.location.origin).toString()
@@ -98,7 +98,7 @@ const normalizeMap = (val, fallbackUrl) => {
   };
 };
 
-/* ============ Map Sketch (instant strokes, simple loader) ============ */
+/* ============ Map Sketch (instant strokes + blob loader) ============ */
 function MapSketch({ value, onChange, title, helper, canvasId }) {
   const canvasRef = useRef(null);
   const roRef = useRef(null);
@@ -108,23 +108,52 @@ function MapSketch({ value, onChange, title, helper, canvasId }) {
   const [strokeWidth, setStrokeWidth] = useState(
     typeof value?.strokeWidth === "number" ? value.strokeWidth : 4
   );
+
   const [imgEl, setImgEl] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // stay in sync if parent resets
+  // keep in sync if parent resets (Start again)
   useEffect(() => { setImageUrl(migrateUrl(value?.imageUrl || "")); }, [value?.imageUrl]);
   useEffect(() => { setPathsState(Array.isArray(value?.paths) ? value.paths : []); }, [value?.paths]);
   useEffect(() => { setStrokeWidth(typeof value?.strokeWidth === "number" ? value.strokeWidth : 4); }, [value?.strokeWidth]);
 
-  // simple preload (absolute URL)
+  // **Blob-based preload** — avoids ALL path quirks across hosts/browsers
   useEffect(() => {
+    let blobUrlToRevoke = null;
     setLoading(true);
     setImgEl(null);
+
     if (!imageUrl) { setLoading(false); return; }
-    const img = new Image();
-    img.onload = () => { setImgEl(img); setLoading(false); };
-    img.onerror = () => { setImgEl(null); setLoading(false); };
-    img.src = imageUrl;
+
+    fetch(imageUrl)
+      .then(res => {
+        if (!res.ok) throw new Error("Fetch failed");
+        return res.blob();
+      })
+      .then(blob => {
+        const blobUrl = URL.createObjectURL(blob);
+        blobUrlToRevoke = blobUrl;
+        const img = new Image();
+        img.onload = () => {
+          setImgEl(img);
+          setLoading(false);
+          URL.revokeObjectURL(blobUrl);
+        };
+        img.onerror = () => {
+          setImgEl(null);
+          setLoading(false);
+          URL.revokeObjectURL(blobUrl);
+        };
+        img.src = blobUrl;
+      })
+      .catch(() => {
+        setImgEl(null);
+        setLoading(false);
+      });
+
+    return () => {
+      if (blobUrlToRevoke) URL.revokeObjectURL(blobUrlToRevoke);
+    };
   }, [imageUrl]);
 
   // notify parent when our data changes
