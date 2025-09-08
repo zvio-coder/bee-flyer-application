@@ -16,11 +16,22 @@ html, body {
   margin:0;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
   color:var(--text);
-  /* Background image from /public with LIGHT overlay for readability */
-  background:
-    linear-gradient(180deg, rgba(11,18,32,.40), rgba(11,18,32,.50)),
-    url('/bg-question.png') center / cover fixed no-repeat;
+  position: relative; /* create stacking context for overlay */
+  background: url('/bg-question.png') center / cover fixed no-repeat;
 }
+
+/* fixed overlay that ALWAYS covers full page while scrolling */
+body::before{
+  content:"";
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(11,18,32,.40), rgba(11,18,32,.50));
+  pointer-events: none;
+  z-index: 0; /* sits behind content, above background image */
+}
+
+/* make app content above overlay */
+.app-wrap{ position: relative; z-index: 1; }
 
 /* Wrapper to center modal */
 .app-wrap{
@@ -75,7 +86,7 @@ label.block{display:block;margin:0 0 6px;font-size:14px;color:var(--muted)}
   cursor:pointer;
   background:#0e1730;
   margin:6px 8px 0 0;
-  color: var(--text);          /* white text for readability */
+  color: var(--text);
   font-weight: 600;
   font-size:16px;
 }
